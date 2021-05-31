@@ -402,9 +402,14 @@ void UKF::GenerateSigmaPoints()
   Xsig_aug_ = MatrixXd::Zero(n_x_aug_, n_sig_);
   Xsig_aug_.col(0) = x_aug_; // set first column
   for (int i = 0; i < n_x_aug_; ++i)
-  { // fill the other columns
+  {
+    // Fill the other columns
     Xsig_aug_.col(i + 1)            = x_aug_ + sig_spread_ * L.col(i);
     Xsig_aug_.col(i + 1 + n_x_aug_) = x_aug_ - sig_spread_ * L.col(i);
+
+    // Yaw angle sigma point normalization modulo +/- M_PI
+    while (Xsig_aug_(3, i) > M_PI) Xsig_aug_(3, i) -= M_PI_x_2_;
+    while (Xsig_aug_(3, i) < -M_PI) Xsig_aug_(3, i) += M_PI_x_2_;
   }
 }
 
@@ -420,11 +425,11 @@ void UKF::PredictSigmaPoints(double delta_t)
   // Loop over all sigma points
   for (int i = 0; i < n_sig_; ++i)
   {
-    // Extract state vector elements for better readability
+    // Extract state vector elements from augmented sigma point matrix for better readability
     double px       = Xsig_aug_(0, i); // x-position relative to the ego car
     double py       = Xsig_aug_(1, i); // y-position relative to the ego car
     double v        = Xsig_aug_(2, i); // longitudinal velocity
-    double yaw      = Xsig_aug_(3, i); // yaw angle
+    double yaw      = Xsig_aug_(3, i); // yaw angle [-M_PI, +M_PI]
     double yawd     = Xsig_aug_(4, i); // yaw rate
     double nu_a     = Xsig_aug_(5, i); // linear accelaration noise
     double nu_yawdd = Xsig_aug_(6, i); // angular acceleration noise
@@ -434,10 +439,17 @@ void UKF::PredictSigmaPoints(double delta_t)
 
     // Precidct next velocity = const. (assumption)
     v_pred = v;
+
     // Predict next yaw angle
     yaw_pred = yaw + yawd * delta_t;
+
+    // Predicted yaw angle normalization modulo +/- M_PI
+    while (yaw_pred > M_PI) yaw_pred -= M_PI_x_2_;
+    while (yaw_pred < -M_PI) yaw_pred += M_PI_x_2_;
+
     // Predict next yaw rate = const. (assumption)
     yawd_pred = yawd;
+
     // Predict next x-y-position using CTRV vehicle motion model (avoid division by zero)
     if (fabs(yawd) > 0.001)
     {
@@ -468,6 +480,10 @@ void UKF::PredictSigmaPoints(double delta_t)
     v_pred    = v_pred + nu_v;
     yaw_pred  = yaw_pred + nu_yaw;
     yawd_pred = yawd_pred + nu_yawd;
+
+    // Predicted yaw angle normalization modulo +/- M_PI
+    while (yaw_pred > M_PI) yaw_pred -= M_PI_x_2_;
+    while (yaw_pred < -M_PI) yaw_pred += M_PI_x_2_;
 
 #if DEBUG
     std::cout << "Process noise effect on the predicted state vector" << std::endl;
@@ -509,6 +525,10 @@ void UKF::PredictStateMeanAndCovariance()
     x_pred += weights_(i) * Xsig_pred_.col(i);
   }
 
+  // Predicted yaw angle normalization modulo +/- M_PI
+  while (x_pred(3) > M_PI) x_pred(3) -= M_PI_x_2_;
+  while (x_pred(3) < -M_PI) x_pred(3) += M_PI_x_2_;
+
   // Predict state (process noise) covariance matrix
   MatrixXd P_pred = MatrixXd::Zero(n_x_, n_x_);
   for (int i = 0; i < n_sig_; ++i)
@@ -516,7 +536,7 @@ void UKF::PredictStateMeanAndCovariance()
     // State residual
     VectorXd x_diff = Xsig_pred_.col(i) - x_pred;
     
-    // Angle normalization
+    // Yaw angle residual normalization modulo +/- M_PI
     while (x_diff(3) > M_PI) x_diff(3) -= M_PI_x_2_;
     while (x_diff(3) < -M_PI) x_diff(3) += M_PI_x_2_;
     
@@ -582,7 +602,7 @@ void UKF::UpdateLidar(MeasurementPackage meas_package)
   // Transform sigma points into measurement space
   for (int i = 0; i < n_sig_; ++i)
   {    
-    // Measurement model
+    // Measurement model in Cartesian coordinates
     Zsig(0, i) = Xsig_pred_(0, i); // x-position (px)
     Zsig(1, i) = Xsig_pred_(1, i); // y-position (py)
   }
@@ -598,10 +618,6 @@ void UKF::UpdateLidar(MeasurementPackage meas_package)
   {
     // Measurement residual
     VectorXd z_diff = Zsig.col(i) - z_pred;
-
-    // Angle normalization modulo +/- M_PI
-    while (z_diff(1) > M_PI) z_diff(1) -= M_PI_x_2_;
-    while (z_diff(1) < -M_PI) z_diff(1) += M_PI_x_2_;
 
     // Update measurement covariance matrix
     S += weights_(i) * z_diff * z_diff.transpose();
@@ -626,16 +642,12 @@ void UKF::UpdateLidar(MeasurementPackage meas_package)
     // State residual
     VectorXd x_diff = Xsig_pred_.col(i) - x_;
 
-    // angle normalization
+    // Yaw angle residual normalization modulo +/- M_PI
     while (x_diff(3) > M_PI) x_diff(3) -= M_PI_x_2_;
     while (x_diff(3) < -M_PI) x_diff(3) += M_PI_x_2_;
 
     // Measurement residual
     VectorXd z_diff = Zsig.col(i) - z_pred;
-
-    // Angle normalization modulo +/- M_PI
-    while (z_diff(1) > M_PI) z_diff(1) -= M_PI_x_2_;
-    while (z_diff(1) < -M_PI) z_diff(1) += M_PI_x_2_;
 
     // Update cross-correlation matrix between sigma points in state space and in measurement space
     Tc += weights_(i) * x_diff * z_diff.transpose();
@@ -647,13 +659,13 @@ void UKF::UpdateLidar(MeasurementPackage meas_package)
   // Measurement residuals
   VectorXd z_diff = z - z_pred;
 
-  // Angle normalization modulo +/- M_PI
-  while (z_diff(1) > M_PI) z_diff(1) -= M_PI_x_2_;
-  while (z_diff(1) < -M_PI) z_diff(1) += M_PI_x_2_;
-
   // Update state mean and state covariance matrix
   x_ = x_ + K * z_diff;
   P_ = P_ - K * S * K.transpose();
+
+  // Yaw angle normalization modulo +/- M_PI
+  while (x_(3) > M_PI) x_(3) -= M_PI_x_2_;
+  while (x_(3) < -M_PI) x_(3) += M_PI_x_2_;
 
   // Calculate Normalized Innovation Squared (NIS) update for Lidar
   NIS_lidar_ = z_diff.transpose() * S.inverse() * z_diff;
@@ -689,7 +701,7 @@ void UKF::UpdateRadar(MeasurementPackage meas_package)
     double px   = Xsig_pred_(0, i); // x-position relative to the ego car
     double py   = Xsig_pred_(1, i); // y-position relative to the ego car
     double v    = Xsig_pred_(2, i); // longitudinal velocity
-    double yaw  = Xsig_pred_(3, i); // yaw angle
+    double yaw  = Xsig_pred_(3, i); // yaw angle [-M_PI, +M_PI]
     double yawd = Xsig_pred_(4, i); // yaw rate
 
     // Calculate velocity components
@@ -698,15 +710,19 @@ void UKF::UpdateRadar(MeasurementPackage meas_package)
 
     // Measurement model assuming all measurements are relative to the ego car
     Zsig(0, i) = sqrt(px * px + py * py);          // r
-    Zsig(1, i) = atan2(py, px);                    // phi
+    Zsig(1, i) = atan2(py, px);                    // phi [-M_PI, +M_PI]
     Zsig(2, i) = (px * vx + py * vy) / Zsig(0, i); // r_dot
   }
 
-  // Calculate'predicted mean measurement (n_sig_ = 2 * n_x_aug_+ 1 simga points)
+  // Calculate predicted mean measurement (n_sig_ = 2 * n_x_aug_+ 1 simga points)
   for (int i = 0; i < n_sig_; ++i)
   {
     z_pred += weights_(i) * Zsig.col(i);
   }
+
+  // Predicted bearing angle normalization modulo +/- M_PI
+  while (z_pred(1) > M_PI) z_pred(1) -= M_PI_x_2_;
+  while (z_pred(1) < -M_PI) z_pred(1) += M_PI_x_2_;
 
   // Calculate predicted measurement covariance matrix (n_sig_ = 2 * n_x_aug_+ 1 simga points)
   for (int i = 0; i < n_sig_; ++i)
@@ -714,7 +730,7 @@ void UKF::UpdateRadar(MeasurementPackage meas_package)
     // Measurement residual
     VectorXd z_diff = Zsig.col(i) - z_pred;
 
-    // Angle normalization modulo +/- M_PI
+    // Bearing angle residual normalization modulo +/- M_PI
     while (z_diff(1) > M_PI) z_diff(1) -= M_PI_x_2_;
     while (z_diff(1) < -M_PI) z_diff(1) += M_PI_x_2_;
 
@@ -741,13 +757,14 @@ void UKF::UpdateRadar(MeasurementPackage meas_package)
     // State residual
     VectorXd x_diff = Xsig_pred_.col(i) - x_;
 
-    // Angle normalization modulo +/- M_PI
+    // Yaw angle residual normalization modulo +/- M_PI
     while (x_diff(3) > M_PI) x_diff(3) -= M_PI_x_2_;
     while (x_diff(3) < -M_PI) x_diff(3) += M_PI_x_2_;
 
     // Measurement residual
     VectorXd z_diff = Zsig.col(i) - z_pred;
 
+    // Bearing angle residual normalization modulo +/- M_PI
     while (z_diff(1) > M_PI) z_diff(1) -= M_PI_x_2_;
     while (z_diff(1) < -M_PI) z_diff(1) += M_PI_x_2_;
 
@@ -761,13 +778,17 @@ void UKF::UpdateRadar(MeasurementPackage meas_package)
   // Update measurement residuals
   VectorXd z_diff = z - z_pred;
 
-  // Angle normalization modulo +/- M_PI
+  // Bearing angle residual normalization modulo +/- M_PI
   while (z_diff(1) > M_PI) z_diff(1) -= M_PI_x_2_;
   while (z_diff(1) < -M_PI) z_diff(1) += M_PI_x_2_;
 
   // Update state mean and state covariance matrix
   x_ = x_ + K * z_diff;
   P_ = P_ - K * S * K.transpose();
+
+  // Yaw angle normalization modulo +/- M_PI
+  while (x_(3) > M_PI) x_(3) -= M_PI_x_2_;
+  while (x_(3) < -M_PI) x_(3) += M_PI_x_2_;
 
   // Calculate Normalized Innovation Squared (NIS) update for Radar
   NIS_radar_ = z_diff.transpose() * S.inverse() * z_diff;

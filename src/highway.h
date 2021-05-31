@@ -20,7 +20,7 @@
 #include <iomanip>      // std::setprecision
 #include <fstream>		// std::ofstream
 
-//#include "gnuplot_i.hpp" //Gnuplot class handles POSIX-Pipe-communikation with Gnuplot
+//#include "gnuplot_i.hpp" //Gnuplot class handles POSIX-Pipe-communication with Gnuplot
 //#include "gnuplot-iostream.h"
 
 // Delare highway simulator class
